@@ -1,0 +1,18 @@
+# Временный кэш VS
+.vs/
+[Xx]64/
+Debug/
+Release/
+
+# Файлы проектов и решений
+*.slnx
+*.sln
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+
+# Файлы компиляции
+*.obj
+*.exe
+*.pdb
+*.ilk
