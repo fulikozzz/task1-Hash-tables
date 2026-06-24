@@ -132,32 +132,36 @@ bool ht_insert(hash_table_t* ht, const char* key, void* value)
 {
     if (ht == NULL || key == NULL) return false;
 
-	// Выполняем рехеширование при необходимости
-	if (ht_load_factor(ht) > MAX_LOAD_FACTOR)
-	{
-		if (!ht_rehash(ht))
-			return false;
-	}
-
-	// Вычисляем индекс бакета для данного ключа
+	// проверяем наличие ключа в таблице
     size_t index = fnv1a_hash(key, ht->capacity);
+    node* current = ht->buckets[index];
+    while (current != NULL) {
+        if (!strcmp(current->key, key)) {
+			current->value = value;  // обновляем без рехеша
+            return true;
+        }
+        current = current->next;
+    }
+
+    // если ключ новый
+    if (ht_load_factor(ht) > MAX_LOAD_FACTOR) {
+        if (!ht_rehash(ht)) return false;
+        index = fnv1a_hash(key, ht->capacity);  // пересчитываем после рехеша
+    }
+
     node* to_insert = malloc(sizeof(node));
- 
     if (to_insert == NULL) return false;
-    
+
     to_insert->key = _strdup(key);
-	to_insert->value = value;
-    
-    if (to_insert->key == NULL || to_insert->value == NULL)
-    {
+    if (to_insert->key == NULL) {
         free(to_insert);
         return false;
     }
-    
+
+    to_insert->value = value;
     to_insert->next = ht->buckets[index];
     ht->buckets[index] = to_insert;
     ht->size++;
-    
     return true;
 }
 
