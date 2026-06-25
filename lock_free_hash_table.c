@@ -14,6 +14,7 @@ typedef struct _node
 {
     char*                   key;        // ключ (строка)
     _Atomic(void*)          value;      // void* для хранения значения любого типа
+    _Atomic(bool)           deleted;      // void* для хранения значения любого типа
     struct _node*           next;       // указатель на следующий узел в цепочке
 } node;
 
@@ -37,11 +38,14 @@ lf_hash_table_t* lf_ht_create(size_t capacity)
 
     ht->buckets = calloc(capacity, sizeof(node*));
 
+
     if (ht->buckets == NULL)
     {
         free(ht);
         return NULL;
     }
+    for (size_t i = 0; i < capacity; i++)
+        atomic_init(&ht->buckets[i], NULL);
 
     atomic_init(&ht->size, 0);
     ht->capacity = capacity;
@@ -94,86 +98,60 @@ double lf_ht_load_factor(const lf_hash_table_t* ht)
 {
     return (double)atomic_load(&ht->size) / ht->capacity;
 }
- 
-bool lf_ht_rehash(lf_hash_table_t* ht)
-{
-    size_t new_capacity = ht->capacity * 2; // Увеличиваем вместимость в 2 раза
-
-    node** new_buckets = calloc(new_capacity, sizeof(node*)); // Выделяем память для нового массива
-
-    if (new_buckets == NULL)
-        return false;
-
-    // Переносим все элементы из старой таблицы в новую
-    for (size_t i = 0; i < ht->capacity; i++)
-    {
-        node* current = ht->buckets[i];
-
-        while (current != NULL)
-        {
-            node* next = current->next;
-
-            size_t new_index = lf_fnv1a_hash(current->key, new_capacity);
-
-            current->next = new_buckets[new_index];
-            new_buckets[new_index] = current;
-
-            current = next;
-        }
-    }
-
-    free(ht->buckets);
-
-    ht->buckets = new_buckets;
-    ht->capacity = new_capacity;
-
-    return true;
-}
 
 bool lf_ht_insert(lf_hash_table_t* ht, const char* key, void* value)
 {
     if (ht == NULL || key == NULL) return false;
 
-    // проверяем наличие ключа в таблице
     size_t index = lf_fnv1a_hash(key, ht->capacity);
-    node* current = atomic_load(&ht->buckets[index]);
-    while (current != NULL) {
-        if (!strcmp(current->key, key)) {
-            atomic_store(&current->value, value);  // обновляем без рехеша
-            return true;
+
+	// Цикл для обеспечения атомарной вставки и обновления значения, если ключ уже существует
+    for (;;)
+    {
+        node* current = atomic_load(&ht->buckets[index]);
+
+        while (current != NULL)
+        {
+			// Если ключ уже существует
+            if (!strcmp(current->key, key))
+            {
+                atomic_store(&current->value, value);
+                atomic_store(&current->deleted, false);
+                return true;
+            }
+
+            current = current->next;
         }
-        current = current->next;
+
+        node* to_insert = malloc(sizeof(node));
+
+        if (to_insert == NULL)
+            return false;
+
+        to_insert->key = _strdup(key);
+
+        if (to_insert->key == NULL)
+        {
+            free(to_insert);
+            return false;
+        }
+
+        atomic_init(&to_insert->value, value);
+        atomic_init(&to_insert->deleted, false);
+
+        node* old_head;
+
+        do
+        {
+            old_head = atomic_load(&ht->buckets[index]);
+            to_insert->next = old_head;
+        } while (!atomic_compare_exchange_weak(
+            &ht->buckets[index], &old_head, to_insert));
+
+        atomic_fetch_add(&ht->size, 1);
+
+        return true;
     }
-
-    // если ключ новый
-    if (lf_ht_load_factor(ht) > MAX_LOAD_FACTOR) {
-        if (!lf_ht_rehash(ht)) return false;
-        index = lf_fnv1a_hash(key, ht->capacity);  // пересчитываем после рехеша
-    }
-
-    node* to_insert = malloc(sizeof(node));
-    if (to_insert == NULL) return false;
-
-    to_insert->key = _strdup(key);
-    if (to_insert->key == NULL) {
-        free(to_insert);
-        return false;
-    }
-
-    atomic_init(&to_insert->value, value);
-    
-    // Указатель для хранения старого значения
-    node* old_head;
-
-    do {
-		old_head = atomic_load(&ht->buckets[index]);
-		to_insert->next = old_head;
-    } while (!atomic_compare_exchange_weak(
-        &ht->buckets[index], &old_head, to_insert));
-    
-    atomic_fetch_add(&ht->size, 1);
-
-    return true;
 }
 
 void* lf_ht_find(lf_hash_table_t* ht, const char* key)
@@ -185,7 +163,7 @@ void* lf_ht_find(lf_hash_table_t* ht, const char* key)
     node* current = atomic_load(&ht->buckets[index]);
     while (current != NULL) {
         node* next = current->next;
-        if (!strcmp(current->key, key))
+        if (!strcmp(current->key, key) && atomic_load(&current->deleted) == false)
             return atomic_load(&current->value);
         current = next;
     }
@@ -198,29 +176,22 @@ bool lf_ht_remove(lf_hash_table_t* ht, const char* key)
 
     size_t index = lf_fnv1a_hash(key, ht->capacity);
 
-    node* current = ht->buckets[index];
-    node* previous = NULL;      // Хранит предыдущий узел для корректного удаления из цепочки
-
+    node* current = atomic_load(&ht->buckets[index]);
+   
     while (current != NULL) {
-        node* next = current->next;         // Сохраняем указатель на следующий узел перед возможным удалением
-        if (!strcmp(current->key, key)) {   // Найден ключ для удаления
-            if (previous == NULL)           // Если удаляемый узел является первым в цепочке
-                ht->buckets[index] = current->next;
-            else
-                previous->next = current->next;
+        if (!strcmp(current->key, key)) 
+        {   
+			bool expected = false; // ожидаемое значение для флага deleted
 
-            free(current->key);
-            free(current->value);
-            free(current);
-
-            ht->size--;
-
+            if (atomic_compare_exchange_strong(&current->deleted, &expected, true))
+            {
+                atomic_fetch_sub(&ht->size, 1);
+            }
             return true;
         }
         else
         {
-            previous = current;
-            current = next;
+            current = current->next;
         }
     }
     return false;
