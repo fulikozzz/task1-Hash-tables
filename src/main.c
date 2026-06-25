@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../lock_free_hash_table.h"
+#include "lock_free_hash_table.h"
 
 #define TEST(name)   printf("\n=== %s ===\n", name)
 #define ОК(msg)    printf("  [OK] %s\n", msg)
