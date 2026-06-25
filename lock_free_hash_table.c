@@ -12,17 +12,17 @@
 // Структура узла
 typedef struct _node
 {
-    char* key;        // ключ (строка)
-    _Atomic(void*)value;      // void* для хранения значения любого типа
-    struct _node* next;       // указатель на следующий узел в цепочке
+    char*                   key;        // ключ (строка)
+    _Atomic(void*)          value;      // void* для хранения значения любого типа
+    struct _node*           next;       // указатель на следующий узел в цепочке
 } node;
 
 // Структура хэш-таблицы
 struct _lf_hash_table_t
 {
-    _Atomic(node*)*buckets;    // массив указателей на узлы
-    _Atomic(size_t)size;       // текущее количество элементов в таблице
-    size_t                   capacity;   // текущая вместимость таблицы
+    _Atomic(node*)*         buckets;    // массив указателей на узлы
+    _Atomic(size_t)         size;       // текущее количество элементов в таблице
+    size_t                  capacity;   // текущая вместимость таблицы
 };
 
 lf_hash_table_t* lf_ht_create(size_t capacity)
@@ -82,7 +82,7 @@ static size_t lf_fnv1a_hash(const char* key, size_t capacity)
 
 size_t lf_ht_size(const lf_hash_table_t* ht)
 {
-    return ht->size;
+    return atomic_load(&ht->size);
 }
 
 size_t lf_ht_capacity(const lf_hash_table_t* ht)
@@ -92,9 +92,9 @@ size_t lf_ht_capacity(const lf_hash_table_t* ht)
 
 double lf_ht_load_factor(const lf_hash_table_t* ht)
 {
-    return (double)ht->size / ht->capacity;
+    return (double)atomic_load(&ht->size) / ht->capacity;
 }
-
+ 
 bool lf_ht_rehash(lf_hash_table_t* ht)
 {
     size_t new_capacity = ht->capacity * 2; // Увеличиваем вместимость в 2 раза
@@ -191,7 +191,7 @@ void* lf_ht_find(lf_hash_table_t* ht, const char* key)
     }
     return NULL;
 }
-
+ 
 bool lf_ht_remove(lf_hash_table_t* ht, const char* key)
 {
     if (ht == NULL || key == NULL) return false;
