@@ -123,6 +123,7 @@ bool lf_ht_insert(lf_hash_table_t* ht, const char* key, void* value)
             current = current->next;
         }
 
+		// Вставка нового узла
         node* to_insert = malloc(sizeof(node));
 
         if (to_insert == NULL)
@@ -200,7 +201,7 @@ bool lf_ht_remove(lf_hash_table_t* ht, const char* key)
 // Функция для печати состояния бакетов хэш-таблицы
 void lf_ht_print_buckets(const lf_hash_table_t* ht)
 {
-    printf("  capacity=%zu  size=%zu  load=%.2f\n", ht->capacity, ht->size, lf_ht_load_factor(ht));
+    printf("  capacity=%zu  size=%zu  load=%.2f\n", &ht->capacity, atomic_load(&ht->size), lf_ht_load_factor(ht));
     // Проходим по каждому бакету и выводим его содержимое
     for (size_t i = 0; i < ht->capacity; i++) {
         if (ht->buckets[i] == NULL) continue;
@@ -208,9 +209,12 @@ void lf_ht_print_buckets(const lf_hash_table_t* ht)
         // Проходим по цепочке узлов в бакете и выводим ключи
         node* current = ht->buckets[i];
         while (current != NULL) {
-            printf("\"%s\"", current->key);
-            if (current->next) printf(" -> ");
-            current = current->next;
+            if (!atomic_load(&current->deleted))
+            {
+                printf("\"%s\"", current->key);
+                if (current->next) printf(" -> ");
+            }
+			current = current->next;
         }
         printf("\n");
     }
@@ -223,8 +227,7 @@ char** lf_ht_keys(const lf_hash_table_t* ht, size_t* count)
         if (count) *count = 0;
         return NULL;
     }
-
-    char** keys = malloc(sizeof(char*) * ht->size);
+    char** keys = malloc(sizeof(char*) * atomic_load(&ht->size));
     if (keys == NULL) {
         if (count) *count = 0;
         return NULL;
@@ -235,7 +238,11 @@ char** lf_ht_keys(const lf_hash_table_t* ht, size_t* count)
     for (size_t i = 0; i < ht->capacity; i++) {
         node* current = ht->buckets[i];
         while (current) {
-            keys[index++] = current->key;
+            if (!atomic_load(&current->deleted))
+            {
+                keys[index++] = current->key;
+            }
+
             current = current->next;
         }
     }
